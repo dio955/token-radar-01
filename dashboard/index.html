@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -8,7 +8,90 @@
 </head>
 <body>
 <a class="skip" href="#board">Skip to the board</a>
-<main id="board" tabindex="-1" aria-busy="true"></main>
+<main id="board">
+  <header class="top">
+    <div class="brand"><span class="dot" aria-hidden="true"></span>Token Radar</div>
+    <div class="meta" id="meta"></div>
+  </header>
+  <section class="lede">
+    <div>
+      <h1 id="lede-title"></h1>
+      <p id="lede-text"></p>
+      <p class="disclaimer">Implied value is a model, not a promise. A protocol that records no token may still have one its DefiLlama record does not carry.</p>
+    </div>
+    <dl class="facts" id="facts"></dl>
+  </section>
+  <section class="controls" aria-label="Board controls">
+    <input id="search" type="search" placeholder="Search name, category or chain" aria-label="Search protocols">
+    <select id="category" aria-label="Filter by category"></select>
+    <div class="tabs" role="tablist" aria-label="Protocol set">
+      <button id="tab-pre" role="tab" aria-selected="true">Pre-token</button>
+      <button id="tab-live" role="tab" aria-selected="false">Live token</button>
+    </div>
+    <span class="count" id="count"></span>
+  </section>
+  <section id="pre-panel">
+    <table id="board-table">
+      <thead>
+        <tr>
+          <th data-sort="rank">Rank</th>
+          <th data-sort="name">Protocol</th>
+          <th data-sort="tvl">TVL</th>
+          <th data-sort="growth">7d</th>
+          <th data-sort="age">Age</th>
+          <th data-sort="multiple">Category x</th>
+          <th data-sort="implied">Implied value</th>
+          <th>Token</th>
+        </tr>
+      </thead>
+      <tbody id="board-body"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>
+      <p>No protocol matches these filters.</p>
+      <button id="clear-filters" type="button">Clear filters</button>
+    </div>
+    <section class="panel" id="model-panel">
+      <h2>How implied value is computed</h2>
+      <p class="formula">implied = round(tvl_usd x category_multiple x (1 + clamp(change_7d, -60, 120)/100 x 0.5) x (0.6 + min(age_days, 1095)/1095 x 0.4))</p>
+      <p id="model-text"></p>
+    </section>
+    <section class="panel" id="calibration-panel">
+      <h2>Calibration: where the multiples come from</h2>
+      <table id="calibration-table">
+        <thead><tr><th>Category</th><th>Multiple</th><th>Live tokens</th><th>Read as</th></tr></thead>
+        <tbody id="calibration-body"></tbody>
+      </table>
+      <p id="calibration-text"></p>
+    </section>
+  </section>
+  <section id="live-panel" hidden>
+    <p class="caption">These protocols already trade, so their market cap is a fact, not a model. They are set aside from the board and shown here for calibration.</p>
+    <table id="live-table">
+      <thead><tr><th>Status</th><th>Protocol</th><th>TVL</th><th>7d</th><th>Market cap</th><th>Token</th></tr></thead>
+      <tbody id="live-body"></tbody>
+    </table>
+  </section>
+  <footer class="foot" id="foot"></footer>
+</main>
+<dialog id="detail" aria-label="Protocol detail">
+  <div class="detail-head">
+    <div>
+      <p class="detail-rank" id="detail-rank"></p>
+      <h2 id="detail-name"></h2>
+      <p class="detail-sub" id="detail-sub"></p>
+    </div>
+    <button id="detail-close" type="button" aria-label="Close detail">Close</button>
+  </div>
+  <section>
+    <h3>Implied value</h3>
+    <dl class="equation" id="equation"></dl>
+    <p class="recompute" id="recompute"></p>
+  </section>
+  <section>
+    <h3>Farm plan</h3>
+    <ol class="farm" id="farm"></ol>
+  </section>
+</dialog>
 <script src="../data.js"></script>
 <script src="app.js"></script>
 </body>
