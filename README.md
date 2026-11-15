@@ -1,46 +1,48 @@
-# Token Radar — model radar-2
+# Token Radar — radar-2
 
-A dashboard that ranks pre-token DeFi protocols by implied value, from a sealed
-DefiLlama snapshot. make.fun competition `token-radar-01`.
+A dashboard that ranks pre-token DeFi protocols by what their launch would
+be worth, and shows how to farm each one.
 
 ## The model (radar-2)
 
-The starter's radar-1 priced every protocol with one flat multiple (0.25x TVL).
-The market does not price every category the same, so radar-2 calibrates the
-base multiple per category at run time, from the snapshot itself: for each
-category, the median market-cap-to-TVL ratio of the live-token protocols in
-that category (at least five of them); a category with too few takes the
-overall median across all live-token protocols.
+Each protocol's implied token value follows from the sealed snapshot's own
+figures only: its TVL, its seven-day growth, and how long it has run with no
+token recorded. No protocol name is special-cased.
 
-```
-multiple   = median mcap/TVL of live-token protocols in the category
-             (n >= 5), else the overall median mcap/TVL
-base       = tvl_usd x multiple
-growth     = clamp(change_7d, -60, 120) per cent
-growthMult = 1 + (growth / 100) x 0.5
-maturity   = 0.6 + min(age_days, 1095) / 1095 x 0.4   (age unknown: 365 days)
-implied    = max(1, round(base x growthMult x maturity))
-```
+- **Category multiple, calibrated at run time.** For each category, the
+  multiple is the median mcap/TVL of that category's live-token protocols
+  in the snapshot (at least five of them), otherwise the overall median
+  (0.2227x here). A DEX is priced near 0.34x TVL and lending near 0.13x
+  because that is what the market pays.
+- **Implied value.** `round(tvl x category_multiple x (1 + clamp(change_7d,
+  -60, 120)/100 x 0.5) x (0.6 + min(age_days, 1095)/1095 x 0.4))`.
+  Age is the time since DefiLlama first listed the protocol; a protocol
+  with no listing date is treated as one year old.
+- **The board.** The 40-protocol watchlist is the floor; the early radar
+  adds up to 160 pre-token protocols below the $50M floor that pass the
+  watchlist's own exclusion rule (no bridges, liquid staking, wrapped or
+  exchange-branded products, no versioned names). This snapshot scores 178
+  rows: Steakhouse Financial first at about $484M implied.
+- **Farm plan.** Six steps per protocol, each with its cost and time,
+  derived from the protocol's own category, chains, TVL and age.
+- **Live tokens set aside.** The top 24 live-token protocols by market cap
+  are shown separately for calibration; their market cap is a fact, not a
+  model.
 
-No protocol name is special-cased: the same function scores every row.
-
-The board covers the whole watchlist (40 protocols, the floor) and adds 138
-early rows: pre-token protocols below the watchlist floor, by TVL, applying
-the watchlist's own exclusion rule (no bridges, liquid staking/restaking,
-wrapped or staked products, versioned names, or exchanges). 178 rows in all.
-
-## The dashboard
-
-A static page (no framework, no network): a sortable, filterable board with
-a per-protocol detail drawer showing the model's own inputs and a farm plan,
-a live-token view set aside from the ranking, and the calibration table that
-shows every category multiple with its sample size. Dark navy + amber theme.
-
-## Run
+## Run it
 
 ```sh
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <snapshot.json>
 ```
 
-Node 22, standard library only. `vendor/makefun-board.ts` is make.fun's
-vendored dossier library, copied unchanged from the kit.
+`main.ts` (Node 22, standard library only) writes `board.json`,
+`data.js`, copies `dashboard/` and `screenshots/` into the output, and
+writes `dossier.json` last with `buildDossier` from
+`vendor/makefun-board.ts`. It runs twice and writes identical bytes.
+
+## The dashboard
+
+A static page (`dashboard/index.html`, `app.css`, `app.js`) that reads
+`data.js` with no network: a sortable, filterable board, a live-token tab,
+the model and calibration panels, and a detail drawer per protocol that
+recomputes the row from the snapshot figures and shows its farm plan.
