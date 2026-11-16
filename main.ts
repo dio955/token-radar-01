@@ -1,103 +1,123 @@
-// Token Radar — entrypoint (Node 22, standard library only).
+// Token Radar radar-2 — entrypoint.
 //
-// Reads the sealed snapshot, builds the radar-2 board with lib/model.ts,
-// writes board.json and the dashboard's data.js, copies dashboard/ and
-// screenshots/ into the output, and writes dossier.json last with the
-// kit's buildDossier. Runs twice must write identical bytes: the build is
-// deterministic (ties break by slug, no clock, no randomness).
+// Reads the sealed DefiLlama snapshot, ranks the pre-token protocols by
+// implied launch value, and writes the board, the dashboard data, the
+// dashboard and screenshots, and the dossier the judge reads.
+//
+// Usage: node main.ts [--input <snapshot.json|dir>] [--output <dir>]
+//   --input defaults to /input, --output to $MAKEFUN_OUTPUT_DIR or /output.
+// The repository root is the directory this file lives in (or
+// $MAKEFUN_BOT_DIR when the grader sets it), never the working directory:
+// the grader runs `node /bot/main.ts` from `/`, so anchoring anything to
+// the working directory would look for dashboard/ and screenshots/ in /.
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import * as nodeUrl from "node:url";
 import { buildDossier } from "./vendor/makefun-board.ts";
-import { buildRadar, boardIssue, MODEL, type Snapshot } from "./lib/model.ts";
+import { MODEL, boardIssue, buildRadar } from "./lib/model.ts";
+import type { Snapshot } from "./lib/model.ts";
 
-const SCREENSHOT_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+const PLAIN_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+
+function fail(message: string): never {
+  throw new Error(`token-radar: ${message}`);
+}
 
 function parseArgs(argv: string[]): { input: string; output: string } {
   let input = "/input";
   let output = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--input" && i + 1 < argv.length) input = argv[++i];
-    else if (argv[i] === "--output" && i + 1 < argv.length) output = argv[++i];
+    const arg = argv[i]!;
+    if (arg === "--input" && i + 1 < argv.length) input = argv[++i]!;
+    else if (arg === "--output" && i + 1 < argv.length) output = argv[++i]!;
+    else if (arg.startsWith("--input=")) input = arg.slice("--input=".length);
+    else if (arg.startsWith("--output=")) output = arg.slice("--output=".length);
+    else fail(`unknown argument: ${arg}`);
   }
   return { input, output };
 }
 
-function readSnapshot(inputPath: string): Snapshot {
-  let file = inputPath;
+function readSnapshot(input: string): Snapshot {
+  let path = input;
   try {
-    if (statSync(inputPath).isDirectory()) file = join(inputPath, "snapshot.json");
+    if (statSync(input).isDirectory()) path = join(input, "snapshot.json");
   } catch {
-    throw new Error(`snapshot not found: ${inputPath}`);
+    fail(`cannot read input ${input}: no such file or directory`);
+  }
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    fail(`cannot read snapshot at ${path}`);
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(file, "utf8"));
-  } catch (error) {
-    throw new Error(`snapshot is not valid JSON (${file}): ${(error as Error).message}`);
+    parsed = JSON.parse(text);
+  } catch (err) {
+    fail(`snapshot at ${path} is not valid JSON: ${(err as Error).message}`);
   }
-  const snapshot = parsed as Snapshot;
-  if (
-    typeof snapshot.as_of !== "string" ||
-    typeof snapshot.source !== "string" ||
-    typeof snapshot.floor_usd !== "number" ||
-    !Array.isArray(snapshot.protocols) ||
-    !Array.isArray(snapshot.watchlist)
-  ) {
-    throw new Error("snapshot is malformed: as_of, source, floor_usd, protocols or watchlist missing");
+  const snap = parsed as { as_of?: unknown; source?: unknown; floor_usd?: unknown; protocols?: unknown; watchlist?: unknown };
+  if (!snap || typeof snap !== "object" || !Array.isArray(snap.protocols) || !Array.isArray(snap.watchlist)) {
+    fail(`snapshot at ${path} is malformed: expected protocols and watchlist arrays`);
   }
-  for (const p of snapshot.protocols) {
-    if (
-      typeof p.slug !== "string" ||
-      typeof p.name !== "string" ||
-      !Array.isArray(p.chains) ||
-      typeof p.tvl_usd !== "number"
-    ) {
-      throw new Error(`snapshot is malformed: protocol ${String(p?.slug)} misses a required field`);
-    }
+  if (typeof snap.as_of !== "string" || typeof snap.source !== "string" || typeof snap.floor_usd !== "number") {
+    fail(`snapshot at ${path} is malformed: expected as_of, source and floor_usd fields`);
   }
-  return snapshot;
+  return snap as Snapshot;
 }
 
-function copyDir(source: string, target: string): number {
-  mkdirSync(target, { recursive: true });
-  let count = 0;
-  for (const name of readdirSync(source)) {
-    if (name.startsWith(".")) continue;
-    const from = join(source, name);
-    if (!statSync(from).isFile()) continue;
-    copyFileSync(from, join(target, name));
-    count++;
-  }
-  return count;
+function copyTree(from: string, to: string): string[] {
+  // Copy every regular file under `from` into `to` at the same relative
+  // paths, skipping dotfiles and dot-directories. Returns the copied names.
+  const copied: string[] = [];
+  mkdirSync(to, { recursive: true });
+  const walk = (dir: string, rel: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith(".")) continue;
+      const src = join(dir, entry.name);
+      const relPath = rel === "" ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        mkdirSync(join(to, relPath), { recursive: true });
+        walk(src, relPath);
+      } else if (entry.isFile()) {
+        copyFileSync(src, join(to, relPath));
+        copied.push(relPath);
+      }
+    }
+  };
+  walk(from, "");
+  return copied;
 }
 
 function main(): void {
   const { input, output } = parseArgs(process.argv.slice(2));
-  const root = resolve(".");
-  const snapshot = readSnapshot(resolve(input));
+  const botDir = process.env.MAKEFUN_BOT_DIR;
+  const root = botDir ?? dirname(nodeUrl.fileURLToPath(import.meta.url));
+
+  const snapshot = readSnapshot(input);
   const radar = buildRadar(snapshot);
   const issue = boardIssue(radar.rows, snapshot.watchlist);
-  if (issue) throw new Error(`board refused: ${issue}`);
+  if (issue) fail(`board refused: ${issue}`);
 
   mkdirSync(output, { recursive: true });
-  writeFileSync(join(output, "board.json"), JSON.stringify({ rows: radar.rows }) + "\n");
+  writeFileSync(join(output, "board.json"), `${JSON.stringify({ rows: radar.rows })}\n`, "utf8");
 
-  const compactRows = radar.rows.map((r) => ({
-    rank: r.rank,
-    slug: r.slug,
-    name: r.name,
-    category: r.category,
-    chains: r.chains,
-    tvl_usd: r.tvl_usd,
-    change_7d: r.change_7d,
-    mcap_usd: r.mcap_usd,
-    listed_at: r.listed_at,
-    age_days: r.age_days,
-    implied_value_usd: r.implied_value_usd,
-    category_multiple: r.model.category_multiple,
-    growth_multiplier: r.model.growth_multiplier,
-    maturity_multiplier: r.model.maturity_multiplier,
+  const compactRows = radar.rows.map((row) => ({
+    rank: row.rank,
+    slug: row.slug,
+    name: row.name,
+    category: row.category,
+    chains: row.chains,
+    tvl_usd: row.tvl_usd,
+    change_7d: row.change_7d,
+    mcap_usd: row.mcap_usd,
+    listed_at: row.listed_at,
+    age_days: row.age_days,
+    implied_value_usd: row.implied_value_usd,
+    category_multiple: row.model.category_multiple,
+    growth_multiplier: row.model.growth_multiplier,
+    maturity_multiplier: row.model.maturity_multiplier,
   }));
   const radarData = {
     as_of: snapshot.as_of,
@@ -114,28 +134,26 @@ function main(): void {
     rows: compactRows,
     live: radar.live,
   };
-  writeFileSync(join(output, "data.js"), `window.RADAR = ${JSON.stringify(radarData)};\n`);
+  writeFileSync(join(output, "data.js"), `window.RADAR = ${JSON.stringify(radarData)};\n`, "utf8");
 
-  copyDir(join(root, "dashboard"), join(output, "dashboard"));
-  const shotCount = copyDir(join(root, "screenshots"), join(output, "screenshots"));
-  if (shotCount < 3) {
-    throw new Error(`need at least 3 screenshots, found ${shotCount}`);
-  }
-  for (const name of readdirSync(join(output, "screenshots"))) {
-    if (name.startsWith(".")) continue;
-    if (!SCREENSHOT_NAME.test(name)) throw new Error(`screenshot name refused: ${name}`);
+  copyTree(join(root, "dashboard"), join(output, "dashboard"));
+  const shots = copyTree(join(root, "screenshots"), join(output, "screenshots"));
+  if (shots.length < 3) fail(`screenshots/ holds ${shots.length} images, need at least 3`);
+  for (const name of shots) {
+    if (!PLAIN_NAME.test(name)) fail(`screenshot name ${name} is not allowed`);
   }
 
-  const dossier = buildDossier(output, {
-    text_max_bytes: 65536,
-    screenshots: { max: 4, max_bytes: 524288 },
-    dashboard: { max_files: 400, max_bytes: 4194304 },
-  });
-  writeFileSync(join(output, "dossier.json"), dossier);
+  writeFileSync(
+    join(output, "dossier.json"),
+    buildDossier(output, {
+      text_max_bytes: 65536,
+      screenshots: { max: 4, max_bytes: 524288 },
+      dashboard: { max_files: 400, max_bytes: 4194304 },
+    }),
+  );
+
   console.log(
-    `token-radar radar-2: ${snapshot.protocols.length} protocols, ` +
-      `${radar.watchlist_size} watchlist, ${radar.rows.length} rows scored ` +
-      `(${radar.early_size} early), ${radar.live_size} live set aside, ${shotCount} screenshots`,
+    `token-radar ${MODEL.version}: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} watchlist, ${radar.rows.length} rows scored (${radar.early_size} early), ${radar.live_size} live set aside, ${shots.length} screenshots`,
   );
 }
 
